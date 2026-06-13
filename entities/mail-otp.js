@@ -1,0 +1,34 @@
+module.exports = (sequelize, Sequelize) => {
+  
+    const MailOTP = sequelize.define('MailOTP', {
+        id:{
+            // Sequelize module has INTEGER Data_Type.
+            type:Sequelize.BIGINT,
+            // To increment id automatically.
+            autoIncrement:true,
+            // id can not be null.
+            allowNull:false,
+            // For uniquely identifying staff.
+            primaryKey:true
+        },
+        email: {
+            type: Sequelize.STRING,
+            allowNull:false,
+            isEmail: true,
+            unique:'email',
+        },
+        otp: {
+            // refresh token for this user
+            type: Sequelize.STRING,
+            allowNull:false,
+            notEmpty: true,
+        },
+    }, {
+        tableName: 'email_otp',
+        timestamps: true,
+        createdAt: true,
+        updatedAt: false,
+        // indexes: [{ unique: true, fields: ["email"] }],
+    });  
+    return MailOTP;
+};

@@ -1,0 +1,773 @@
+const db = require('../config/entities-config');
+const { Op } = require('sequelize');
+const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
+const fsPromises = require('fs').promises;
+const { subDays, addDays, format } = require('date-fns');
+const { nanoid } = require('nanoid');
+
+const { generateOTP } = require('../utils/otp-generator');
+const { decrypt, encrypt } = require('../utils/crypto-helper');
+const { createRefreshToken, createClientAccessToken } = require('../middleware/jwt');
+
+const User = db.users;
+const Course = db.courses;
+const Country = db.countries;
+const MailOTP = db.mailOTP;
+const ImgKeyHash = db.imgKeyHash;
+const EmailsToUpdate = db.emailsToUpdate;
+const RefreshToken = db.refreshTokens;
+const Subscriptions = db.subscriptions;
+
+const findActiveById = async id => {
+    return await User.findByPk(id, {
+        where: {status: true},
+        attributes: ['id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+        include: [
+            {
+                model: Course,
+                // where: { status : true },
+            },
+            {
+                model: ImgKeyHash,
+            }
+        ]
+    });
+};
+
+const findById = async id => {
+    return await User.findByPk(id, {
+        attributes: ['id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+        include: [
+            {
+                model: Course,
+                // where: { status : true },
+            },
+            {
+                model: ImgKeyHash,
+            }
+        ]
+    });
+};
+
+// solely for checking user subscription
+const findSubById = async id => {
+    return await User.findByPk(id, {
+        attributes: ['id', 'nano_id', 'sub_expiration' ]
+    });
+};
+
+const findByEmail = async email => {
+    try {
+        const user = await User.findOne({
+            where: { email },
+            include: [
+                {
+                    model: Course,
+                },
+                {
+                    model: ImgKeyHash,
+                },
+            ]
+        });
+        if(!user){
+            throw new Error('Invalid credentials');
+        }
+        const [lastSub, lastSubMetadata] = await db.sequelize.query(
+            `select sub.plan_id, sub.createdAt, sp.name from subscriptions sub join sub_plans sp on sp.id = sub.plan_id where 
+            sub.subscriber_id = :subscriber_id and sub.used = true ORDER BY sub.createdAt DESC limit 1`,
+            {
+                replacements: { subscriber_id: user.id },
+            }
+        );
+        user.lastSub = lastSub[0];
+        return user;
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+};
+
+const updateEmail = async (user_id, nano_id) => {
+    try {
+        // find client from db using id in request parameter
+        const client = await User.findByPk(user_id, {
+            where: {status: true},
+            attributes: ['id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+            include: [
+                {
+                    model: Course,
+                },
+                {
+                    model: ImgKeyHash,
+                }
+            ]
+        });
+        if(!client) {
+            throw new Error("Invalid Credentials");
+        }
+        const emailToUpdate = await EmailsToUpdate.findOne({ 
+            where: { nano_id }
+        });
+        if(!emailToUpdate) {
+            throw new Error("Invalid link");
+        }
+        if(client.email !== emailToUpdate.current_email){
+            throw new Error("Invalid Opertion. Emails do not match");
+        }
+        // set mode to use in refresh token (specifies staff or client, 0 for Staff, 1 for Client)
+        client.mode = encrypt('1');
+        // update client mail to new mail
+        client.email = emailToUpdate.new_email;
+        // create jwt refresh token
+        const refreshToken = createRefreshToken(client);
+        // create jwt access token
+        const accessToken = createClientAccessToken(client);
+        await db.sequelize.transaction( async (t) => {
+            // delete email_to_update assiciated with nano_id
+            await emailToUpdate.destroy({ transaction: t });
+            await User.update({ email: emailToUpdate.new_email }, {
+                where: { id: user_id },
+                returning: true,
+                transaction: t
+            });
+            // delete mail_otp assiciated with email
+            await MailOTP.destroy({ where: { email: emailToUpdate.new_email } }, { transaction: t });
+            // delete all logged in tokens in refresh_tokens for this staff
+            await RefreshToken.destroy({where: { user_id, user_type: 'C' }}, { transaction: t });
+            // save refresh token with associated client in db
+            await RefreshToken.create({ user_id, user_type: "C", token: refreshToken }, { transaction: t });
+        });
+        return { refreshToken, accessToken };
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+};
+
+const markEmailForUpdate = async (id, email) => {
+    const mail = email.trim();
+    // find client from db using id in request parameter
+    const client = await User.findOne({ where: {status: true, id} });
+    if(!client) {
+        throw new Error("Account Not Found");
+    }
+    try {
+        // is new email already used?
+        const inUse = await User.findOne({ where: { email: mail } });
+        if(inUse){
+            throw new Error("Email already in use. Consider using another email");
+        }
+        return await db.sequelize.transaction( async (t) => {
+            // detect if user has previously initiated process to update email
+            const emailToUpdate = await EmailsToUpdate.findOne({ 
+                where: { current_email: client.email }
+            });
+            const nano_id = nanoid();
+            if(emailToUpdate){
+                await EmailsToUpdate.update({ nano_id, new_email: mail }, {
+                    where: { current_email: client.email },
+                    returning: true,
+                    transaction: t
+                });
+            }else {
+                await EmailsToUpdate.create({ nano_id, new_email: mail, current_email: client.email, user_type: 'C' }, { transaction: t });
+            }
+            return { nano_id, current_email: client.email }
+        });
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+}
+
+const logoutAllAccounts = async (id) => {};
+
+const updatePassword = async (id, data) => {
+    const { pw, current_pw } = data;
+    // find client from db using id in request parameter
+    const client = await User.findOne({
+        where: { status: true, id },
+    });
+    if(!client) {
+        throw new Error("Invalid operation");
+    }
+    // check if current password is correct
+    // if match, then compare password
+    const match = await bcrypt.compare(decrypt(current_pw), client.pw);
+    if(match) {
+        // encrypt password
+        const hashedPwd = await bcrypt.hash(decrypt(pw), 12);
+        await User.update({ pw: hashedPwd }, {
+            where: { id },
+        });
+    }else {
+        throw new Error("Invalid password");
+    }
+}
+
+const resetPassword = async (data) => {
+    const client = await User.findOne({ 
+        where: { email: data.email.trim() },
+    });
+
+    if (!client) {
+        throw new Error("Invalid credentials");
+    }
+
+    if(client.fname === data.fname.trim() && client.lname === data.lname.trim()){
+        const pw = new Date().toLocaleDateString('en-us', { weekday: 'short' }).toUpperCase() + generateOTP(6);
+
+        // encrypt password
+        const hashedPwd = await bcrypt.hash(pw, 12);
+        await User.update({ pw: hashedPwd }, {
+            where: { email: data.email },
+        });
+        
+        return pw;
+    }else {
+        throw new Error("Invalid credentials");
+    }
+}
+
+const register = async client => {
+    const { fname, lname, pw, email, gender, dob, hcp, hc_id, country_id, dp } = client;
+    const f_name = fname.trim();
+    const l_name = lname.trim();
+    const mail = email.trim();
+    // find if email is already registered
+    const user = await User.findOne({ where: { email } });
+    const course =  await Course.findByPk(hc_id);
+    const country = await Country.findByPk(country_id);
+    
+    if(user) {
+        throw new Error("Email is already registered");
+    }
+    
+    if(course === null) {
+        throw new Error("Invalid Golf Course specified as Home Club");
+    }
+    
+    if(country === null) {
+        throw new Error("Invalid Country specified");
+    }
+
+    const yesterday = subDays(new Date(), 1); // Subtracts 1 day from today to use as sub_expiration
+    const next30days = addDays(new Date(), 30);
+    const birthDay = format(dob, "yyyy-MM-dd");
+
+    const decrypted_pw = decrypt(pw);
+    // encrypt password
+    const hashedPwd = await bcrypt.hash(decrypted_pw, 12);
+    try {
+        return await db.sequelize.transaction( async (t) => {
+            const c = await User.create(
+                { nano_id: nanoid(), fname: f_name, lname: l_name, pw: hashedPwd, email: mail, status: true, gender, dob: birthDay, hcp, course_id: hc_id, sub_expiration: next30days, country_id }
+                , { transaction: t }
+            );
+            // delete mail_otp assiciated with email
+            await MailOTP.destroy({ where: { email } }, { transaction: t });
+            return c;
+        });
+    } catch (error) {
+        if(error.name === 'SequelizeUniqueConstraintError'){
+            throw new Error(error.errors[0].value + " not available. Please use a different value");
+        }
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+};
+
+const updatePersonalInfo = async (id, profile) => {
+    const { fname, lname, dob, gender } = profile;
+    const f_name = fname.trim();
+    const l_name = lname.trim();
+    const birthDay = format(dob, "yyyy-MM-dd");
+    // find client to use in sequelize transaction and setter for industries (ManyToMany) below
+    const client = await User.findOne({
+        where: { status: true, id },
+    });
+    try {
+        await db.sequelize.transaction( async (t) => {
+            await client.update({ fname: f_name, lname: l_name, dob: birthDay, gender }, {
+                where: { id },
+                returning: true,
+                transaction: t
+            });
+        });
+        // fetch updated client and return
+        return await User.findByPk(id, {
+            where: {status: true},
+            attributes: ['id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+            include: [
+                {
+                    model: Course,
+                },
+                {
+                    model: ImgKeyHash,
+                }
+            ]
+        });
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+};
+
+const updateHomeClub = async (id, course_id) => {
+    try {
+        // find client to use in sequelize transaction and setter for industries (ManyToMany) below
+        const client = await User.findByPk(id);
+        const course = await Course.findOne({
+            where: { 
+                status: true,
+                id: course_id,
+            },
+            attributes: [ 'id' ],
+        });
+        if(course){
+            await client.update({ course_id }, {
+                where: { id },
+                returning: true,
+            });
+        }else {
+            throw new Error("Invalid Golf Course specified");
+        }
+        // fetch updated client and return
+        return await User.findByPk(id, {
+            where: {status: true},
+            attributes: ['id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+            include: [
+                {
+                    model: Course,
+                },
+                {
+                    model: ImgKeyHash,
+                }
+            ]
+        });
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+};
+
+const updateHCP = async (id, hcp) => {
+    try {
+        // find client to use in sequelize transaction and setter for industries (ManyToMany) below
+        const client = await User.findByPk(id);
+        await client.update({ hcp }, {
+            where: { id },
+            returning: true,
+        });
+        // fetch updated client and return
+        return await User.findByPk(id, {
+            where: {status: true},
+            attributes: ['id', 'nano_id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+            include: [
+                {
+                    model: Course,
+                },
+                {
+                    model: ImgKeyHash,
+                }
+            ]
+        });
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+};
+
+const changePassword = async (id, profile) => {
+    const { newPass } = profile;
+    // encrypt password
+    const hashedPwd = await bcrypt.hash(newPass, 12);
+    await User.update({ pw: hashedPwd }, {
+        where: { id },
+        returning: true,
+    });
+    // fetch updated client and return
+    return await findById(id);
+};
+
+const dashboardInfo = async (id) => {
+    // Home club data
+    const [hcPlayersResult, hcPlayersMetadata] = await db.sequelize.query(
+        `select count(u.id) as players from users u where u.course_id = (select course_id from users where users.id = :id)`,
+        {
+            replacements: { id },
+        }
+    );
+    // Home club data
+    const [hcResult, hcMetadata] = await db.sequelize.query(
+        `select c.id, c.name, c.no_of_holes, u.id as user_id, u.course_id from courses c join users u on 
+        u.course_id = c.id and u.id = :id`,
+        {
+            replacements: { id },
+        }
+    );
+    // Ongoing Games/Rounds
+    const [ongoingRoundsResult, ongoingRoundsMetadata] = await db.sequelize.query(
+        `select distinct games.nano_id as game_id, games.name, games.date, games.rounds, games.mode, games.hole_mode, games.status, courses.name as course_name, 
+        games.createdAt, courses.id as course_id from user_game_group join games on user_game_group.game_id = games.id join courses on games.course_id = courses.id 
+        where user_id = :id and games.status < 3`,
+        {
+            replacements: { id },
+        }
+    );
+    // Recent/last 5 games played
+    const [recentGamesResult, recentGamesMetadata] = await db.sequelize.query(
+        `select distinct a.id, games.nano_id as game_id, games.name, games.date, games.rounds, games.mode, games.hole_mode, games.status, 
+        count(b.user_id) as players from user_game_group a join games on a.game_id = games.id join user_game_group 
+        b on a.game_id = b.game_id where a.user_id = :id and games.status = 3 group by a.game_id, a.id ORDER BY a.id DESC limit 5`,
+        {
+            replacements: { id },
+        }
+    );
+    // Courses and number of games played
+    const [results, metadata] = await db.sequelize.query(
+        `select count(distinct course_id) as courses_played, count(distinct game_id) as games_played from 
+        user_game_group join games on user_game_group.game_id = games.id where user_id = :id and games.status = 3`,
+        {
+            replacements: { id },
+        }
+    );
+    results[0].home_club = hcResult[0];
+    results[0].ongoing_rounds = ongoingRoundsResult;
+    results[0].recent_games = recentGamesResult;
+    results[0].hc_players = hcPlayersResult[0].players;
+    return results[0];
+}
+
+const playedCourses = async (nano_id) => {
+    // Courses played
+    const [results, metadata] = await db.sequelize.query(
+        `select c.name, c.no_of_holes, c.location, sum(ch.par) as par from user_game_group join games on user_game_group.game_id = games.id join courses c on 
+        games.course_id = c.id join course_holes ch on ch.course_id = c.id where user_id = (select id from users where nano_id = :nano_id) and games.status = 3 group by c.id;`,
+        {
+            replacements: { nano_id },
+        }
+    );
+    return results;
+}
+
+const playerInfo = async (nano_id) => {
+    // Home club data
+    const user = await User.findOne({
+        where: { nano_id },
+        attributes: ['id', 'nano_id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp', ],
+        include: [
+            {
+                model: Course,
+                // where: { status : true },
+            },
+            {
+                model: ImgKeyHash,
+            }
+        ]
+    });
+    if (user) {
+        // Recent/last 10 games played
+        const [recentGamesResult, recentGamesMetadata] = await db.sequelize.query(
+            `select distinct a.id, a.game_id, games.nano_id, games.name, games.date, games.rounds, games.mode, games.hole_mode, games.status, 
+            count(b.user_id) as players from user_game_group a join games on a.game_id = games.id join user_game_group 
+            b on a.game_id = b.game_id where a.user_id = :id and games.status = 3 group by a.game_id, a.id ORDER BY a.id DESC limit 10`,
+            {
+                replacements: { id: user.id },
+            }
+        );
+        // Courses and number of games played
+        const [results, metadata] = await db.sequelize.query(
+            `select count(distinct course_id) as courses_played, count(distinct game_id) as games_played from 
+            user_game_group join games on user_game_group.game_id = games.id where user_id = :id and games.status = 3`,
+            {
+                replacements: { id: user.id },
+            }
+        );
+        results[0].recent_games = recentGamesResult;
+        results[0].user = user;
+        return results[0];
+    }else{
+        throw new Error("User not found");
+    }
+}
+
+const topPlayers = async () => {
+    try {
+        const [topFivePlayers, topFivePlayersMetadata] = await db.sequelize.query(
+            `select count(ugg.user_id) as games, fname, lname, lname, hcp, key_hash, dp.user_id, countries.name as country from 
+            user_game_group as ugg join users on users.id = ugg.user_id join rockmade.countries on users.country_id = countries.id
+            left outer join dp_keyhash as dp on dp.user_id = users.id group by ugg.user_id, dp.key_hash order by games desc limit 4`
+        );
+        return topFivePlayers;
+    } catch (error) {
+        // If the execution reaches this line, an error occurred.
+        // The transaction has already been rolled back automatically by Sequelize!
+        throw new Error(error.message); // rethrow the error for front-end 
+    }
+}
+
+// for use by players to search other players
+const playerSearch = async (id, hc, cursor, page_size) => {
+    let pageSize = page_size * 1;
+    if(hc === true || hc === 'true'){
+        // search players in same home club as signed in user
+        return await User.findAll({
+            attributes: ['id', 'nano_id', 'fname', 'lname', 'hcp' ],
+            where: { 
+                status: true,
+                id: {
+                    [Op.gt]: cursor
+                },
+                course_id: {
+                    [Op.eq]: db.sequelize.literal(`(select course_id from users where users.id = ${id})`)
+                },
+            },
+            include: [
+                {
+                    model: ImgKeyHash,
+                },
+                {
+                    model: Course,
+                    attributes: ['id', 'nano_id', 'name' ],
+                    where: { status : true },
+                },
+            ],
+            limit: pageSize,
+            order: [['id', 'ASC']]
+        });
+    }else {
+        return await User.findAll({
+            attributes: ['id', 'nano_id', 'fname', 'lname', 'hcp' ],
+            where: { 
+                status: true,
+                id: {
+                    [Op.gt]: cursor
+                },
+            },
+            include: [
+                {
+                    model: ImgKeyHash,
+                },
+                {
+                    model: Course,
+                    attributes: ['id', 'nano_id', 'name' ],
+                    where: { status : true },
+                },
+            ],
+            limit: pageSize,
+            order: [['id', 'ASC']]
+        });
+    }
+}
+
+// for use by players to search other players
+const playerQryStrSearch = async (id, hc, cursor, page_size, queryStr) => {
+    let pageSize = page_size * 1;
+    if(hc === true || hc === 'true'){
+        // search players in same home club as signed in user
+        return await User.findAll({
+            attributes: ['id', 'nano_id', 'fname', 'lname', 'hcp' ],
+            where: { 
+                status: true,
+                id: {
+                    [Op.gt]: cursor
+                },
+                course_id: {
+                    [Op.eq]: db.sequelize.literal(`(select course_id from users where users.id = ${id})`)
+                },
+                [Op.or]: {
+                    fname: {
+                        [Op.like]: `%${queryStr}%`
+                    },
+                    lname: {
+                        [Op.like]: `%${queryStr}%`
+                    }
+                },
+            },
+            include: [
+                {
+                    model: ImgKeyHash,
+                },
+                {
+                    model: Course,
+                    attributes: ['id', 'nano_id', 'name' ],
+                    where: { status : true },
+                },
+            ],
+            limit: pageSize,
+            order: [['id', 'ASC']]
+        });
+    }else {
+        return await User.findAll({
+            attributes: ['id', 'nano_id', 'fname', 'lname', 'hcp' ],
+            where: { 
+                status: true,
+                id: {
+                    [Op.gt]: cursor
+                },
+                [Op.or]: {
+                    fname: {
+                        [Op.like]: `%${queryStr}%`
+                    },
+                    lname: {
+                        [Op.like]: `%${queryStr}%`
+                    }
+                },
+            },
+            include: [
+                {
+                    model: ImgKeyHash,
+                },
+                {
+                    model: Course,
+                    attributes: ['id', 'nano_id', 'name' ],
+                    where: { status : true },
+                },
+            ],
+            limit: pageSize,
+            order: [['id', 'ASC']]
+        });
+    }
+}
+
+// for use by admin to search players
+const search = async (prop) => {
+    const { str, status } = prop;
+    const s = JSON.parse(status);
+    return await User.findAll({
+        attributes: ['id', 'nano_id', 'fname', 'lname', 'sub_expiration', 'email', 'gender', 'dob', 'status', 'hcp' ],
+        where: { 
+            status: s,
+            [Op.or]: {
+                fname: {
+                    [Op.like]: `%${str}%`
+                },
+                lname: {
+                    [Op.like]: `%${str}%`
+                }
+            },
+        },
+        include: [
+            {
+                model: ImgKeyHash,
+            },
+            {
+                model: Course,
+                attributes: ['id', 'nano_id', 'name' ],
+                where: { status : true },
+            },
+        ]
+    });
+}
+
+const gameUserSearch = async (prop) => {
+    const { str } = prop;
+    const sub = format(new Date(), "yyyy-MM-dd");
+    return await User.findAll({
+        attributes: ['id', 'nano_id', 'fname', 'lname', 'hcp' ],
+        where: { 
+            status: true,
+            // sub_expiration: {
+            //     [Op.gte]: sub
+            // },
+            [Op.or]: {
+                fname: {
+                    [Op.like]: `%${str}%`
+                },
+                lname: {
+                    [Op.like]: `%${str}%`
+                }
+            },
+        },
+        include: [
+            {
+                model: ImgKeyHash,
+            },
+            {
+                model: Course,
+                attributes: ['id', 'nano_id', 'name' ],
+                where: { status : true },
+            },
+        ]
+    });
+}
+
+const listClients = async ( {name, idOffset, limit, acc_type}, pageSpan ) => {
+    const where = {
+        [Op.or]: [
+            { 
+                fname: {
+                    [Op.like]: `%${name != undefined ? name : ''}%`,
+                }
+            }, 
+            { 
+                lname: {
+                    [Op.like]: `%${name != undefined ? name : ''}%`,
+                },
+             }
+        ],
+        acc_type,
+        id: {
+            [Op.gt] : idOffset
+        }
+    };
+
+    const clients = await User.findAll(
+        { 
+            where, 
+            limit: limit * pageSpan,
+        }
+    );
+
+    // count total jobs found for this query. 
+    const count = await User.count({
+        where
+    });
+
+    return { clients, count };
+};
+
+const changeClientStatus = async ({id, status}) => {
+    const client = await User.findByPk(id);
+    client.status = status;
+    return await client.save();
+}
+
+// PRIVATE METHODS START HERE
+
+module.exports = {
+    findActiveById,
+    findById,
+    findSubById,
+    findByEmail,
+    register,
+    updatePersonalInfo,
+    updateHomeClub,
+    updateHCP,
+    markEmailForUpdate,
+    updateEmail,
+    logoutAllAccounts,
+    updatePassword,
+    resetPassword,
+    changePassword,
+    playedCourses,
+    dashboardInfo,
+    playerInfo,
+    listClients,
+    changeClientStatus,
+    search,
+    topPlayers,
+    playerSearch, 
+    playerQryStrSearch,
+    gameUserSearch,
+};
