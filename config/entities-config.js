@@ -15,6 +15,7 @@ db.brands = require('../entities/product-brands')(sequelize, Sequelize);
 db.tracts = require('../entities/tracts')(sequelize, Sequelize);
 db.categories = require('../entities/product-category')(sequelize, Sequelize);
 db.expDate = require('../entities/product-exp-date')(sequelize, Sequelize);
+db.barCode = require('../entities/product-barcode')(sequelize, Sequelize);
 db.staffAuths = require('../entities/staff-authority')(sequelize, Sequelize);
 db.mailOTP = require('../entities/mail-otp')(sequelize, Sequelize);
 db.termsAndAgreement = require('../entities/terms-and-agreement')(sequelize, Sequelize);
@@ -75,6 +76,24 @@ db.products.hasOne(db.expDate, {
     }
 });
 db.expDate.belongsTo(db.products, {
+    foreignKey: {
+        // also set the foreign key name here to avoid sequelize adding column TractId
+        name: 'product_id',
+        allowNull: false,
+    }
+});
+
+/*  Assocation between product and barcode. The barcode field is an optional field. Hence, it's designation
+    into it's own table
+*/
+db.products.hasOne(db.barCode, {
+    foreignKey: {
+        // also set the foreign key name here to avoid sequelize adding column TractId
+        name: 'product_id',
+        allowNull: false,
+    }
+});
+db.barCode.belongsTo(db.products, {
     foreignKey: {
         // also set the foreign key name here to avoid sequelize adding column TractId
         name: 'product_id',

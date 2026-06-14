@@ -98,7 +98,7 @@ const findAllActive = async () => {
 
 const search = async (prop) => {
     const { str, status } = prop;
-    const s = JSON.parse(status)
+    const s = JSON.parse(status);
     const [results, metadata] = await db.sequelize.query(
         `SELECT t.nano_id as id, t.name, t.status, t.createdAt, s.fname, s.lname, s.sex, s.email, s.phone FROM tracts t inner join staff s on 
         t.creator = s.id WHERE t.name LIKE :searchPattern and t.status = :s`, {
@@ -117,7 +117,7 @@ const paginateFetch = async (prop) => {
 
     let size = pageSize * 1;    // convert to number
     const offset = (page - 1) * size;
-    const s = JSON.parse(status)
+    const s = JSON.parse(status);
 
     const [results, metadata] = await db.sequelize.query(
         `SELECT t.nano_id as id, t.name, t.status, t.createdAt, s.fname, s.lname, s.sex, s.email, s.phone FROM tracts t inner join staff s on 
@@ -131,8 +131,8 @@ const paginateFetch = async (prop) => {
     return {count, results};
 }
 
-/*  method to initialize Product category page with 100 active category to use as defaultOptions for AsyncSelect
-    and also count total active category for pagination component */
+/*  method to initialize Tract page with 100 active tracts to use as defaultOptions for AsyncSelect
+    and also count total active tracts for pagination component */
 const activeProductTractPageInit = async (pageSize) => {
     let size = pageSize * 1;    // convert to number
     const [results, metadata] = await db.sequelize.query(

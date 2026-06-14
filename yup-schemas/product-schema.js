@@ -3,6 +3,7 @@ const yup = require("yup");
 const productCreationSchema = yup.object().shape({
 	product_name: yup.string().required("Product name required!"),
 	barcode: yup.string().optional().nullable(),
+	id: yup.string().optional().nullable(),
 	expDate: yup
 		.date()
 		.optional()

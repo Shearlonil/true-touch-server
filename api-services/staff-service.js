@@ -112,7 +112,7 @@ const paginateFetch = async (prop) => {
 
     let size = pageSize * 1;    // convert to number
     const offset = (page - 1) * size;
-    const s = JSON.parse(status)
+    const s = JSON.parse(status);
 
     const [results, metadata] = await db.sequelize.query(
         `select a.nano_id as id, a.fname, a.lname, a.phone, a.email, a.sex, a.status, a.createdAt, b.fname as creator_fname, 

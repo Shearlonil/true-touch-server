@@ -83,7 +83,7 @@ const activeProductBrandsPageInit = async (pageSize) => {
 
 const search = async (prop) => {
     const { str, status } = prop;
-    const s = JSON.parse(status)
+    const s = JSON.parse(status);
     const [results, metadata] = await db.sequelize.query(
         `SELECT b.nano_id as id, b.name, b.status, b.createdAt, s.fname, s.lname, s.sex, s.email, s.phone FROM product_brands b inner join staff s on 
         b.creator = s.id WHERE b.name LIKE :searchPattern and b.status = :s`, {
@@ -102,7 +102,7 @@ const paginateFetch = async (prop) => {
 
     let size = pageSize * 1;    // convert to number
     const offset = (page - 1) * size;
-    const s = JSON.parse(status)
+    const s = JSON.parse(status);
 
     const [results, metadata] = await db.sequelize.query(
         `SELECT b.nano_id as id, b.name, b.status, b.createdAt, s.fname, s.lname, s.sex, s.email, s.phone FROM product_brands b inner join staff s on 
