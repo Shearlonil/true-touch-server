@@ -3,11 +3,11 @@ const router = express.Router();
 
 const { authorities } = require('../utils/default-entries');
 const preAuthorize = require('../middleware/verify-authorities');
-const { productCreationSchema } = require('../yup-schemas/product-schema');
+const { productCreationSchema, productFilterSearchSchema } = require('../yup-schemas/product-schema');
 const { encrypt, decrypt } = require('../utils/crypto-helper');
 const { verifyAccessToken } = require('../middleware/jwt');
 const productService = require('../api-services/product-service');
-const validate = require('../middleware/schemer-validator');
+const { validateReqBody, validateReqQuery } = require('../middleware/schemer-validator');
 const { routeStringMiscParamSchema, routeBooleanParamSchema, routePositiveNumberMiscParamSchema } = require('../yup-schemas/request-params');
 
 const findByNanoId = async (req, res) => {
@@ -59,24 +59,23 @@ const findAllActive = async (req, res) => {
 
 const activeProductPageInit = async (req, res) => {
     try {
-        const mode = decrypt(req.whom.mode);
-        if(mode !== '0'){
-            return res.sendStatus(404);
-        }
+        // const mode = decrypt(req.whom.mode);
+        // if(mode !== '0'){
+        //     return res.sendStatus(404);
+        // }
         routePositiveNumberMiscParamSchema.validateSync(req.params.pageSize);
         res.status(200).json(await productService.activeProductPageInit(req.params.pageSize));
     } catch (error) {
-        console.log(error);
         return res.status(400).json({'message': error.message});
     }
 };
 
 const search = async (req, res) => {
     try {
-        const mode = decrypt(req.whom.mode);
-        if(mode !== '0'){
-            return res.sendStatus(404);
-        }
+        // const mode = decrypt(req.whom.mode);
+        // if(mode !== '0'){
+        //     return res.sendStatus(404);
+        // }
         routeStringMiscParamSchema.validateSync(req.query.str);
         routeBooleanParamSchema.validateSync(req.query.status);
         res.status(200).json( await productService.search(req.query) );
@@ -96,12 +95,31 @@ const paginateFetch = async (req, res) => {
     }
 }
 
-router.route('/create').post( verifyAccessToken, preAuthorize(authorities.createProducts.code), validate(productCreationSchema), createProduct );
-router.route('/update').put( verifyAccessToken, preAuthorize(authorities.updateProducts.code), validate(productCreationSchema), update );
+const filterPaginateFetch = async (req, res) => {
+    try {
+        res.status(200).json( await productService.filterPaginateFetch(req.query) );
+    } catch (error) {
+        return res.status(400).json({'message': error.message});
+    }
+}
+
+const random = async (req, res) => {
+    try {
+        res.status(200).json( await productService.random() );
+    } catch (error) {
+        return res.status(400).json({'message': error.message});
+    }
+}
+
+router.route('/create').post( verifyAccessToken, preAuthorize(authorities.createProducts.code), validateReqBody(productCreationSchema), createProduct );
+router.route('/update').put( verifyAccessToken, preAuthorize(authorities.updateProducts.code), validateReqBody(productCreationSchema), update );
 router.route('/status').put( verifyAccessToken, preAuthorize(authorities.deleteActivateProducts.code), status );
-router.route('/active/init/:pageSize').get( verifyAccessToken, activeProductPageInit );
+router.route('/active/init/:pageSize').get( activeProductPageInit );
 router.route('/active/all').get( findAllActive );
-router.route('/search/:nano_id').get( verifyAccessToken, findByNanoId );
-router.route('/search/page/:pageNumber').get( verifyAccessToken, paginateFetch );
-router.route('/query').get( verifyAccessToken, search );
+router.route('/search/page/:pageNumber').get( paginateFetch );
+router.route('/search/:nano_id').get( findByNanoId );
+router.route('/query/filter').get( validateReqQuery(productFilterSearchSchema), filterPaginateFetch );
+router.route('/query').get( search );
+router.route('/random').get( random );
+
 module.exports = router;

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const validate = require('../middleware/schemer-validator');
+const { validateReqBody } = require('../middleware/schemer-validator');
 const { authorities } = require('../utils/default-entries');
 const preAuthorize = require('../middleware/verify-authorities');
 const { verifyAccessToken, createStaffAccessToken, verifyOTPtoken, createRefreshToken } = require('../middleware/jwt');
@@ -314,7 +314,7 @@ const activeStaffPageInit = async (req, res) => {
     }
 };
 
-router.route('/register').post( verifyAccessToken, validate(schema), preAuthorize(authorities.addStaffAccount.code), registerStaff );
+router.route('/register').post( verifyAccessToken, validateReqBody(schema), preAuthorize(authorities.addStaffAccount.code), registerStaff );
 router.route('/auths').get( verifyAccessToken, getAuthorities );
 router.route('/unverified-mails').get( verifyAccessToken, countUnverifiedMails );
 router.route('/unverified-mails/view').get( verifyAccessToken, preAuthorize(authorities.viewClients.code), getUnverifiedMails );
@@ -330,9 +330,9 @@ router.route('/roles/update').put( verifyAccessToken, preAuthorize(authorities.u
 router.route('/search').get( verifyAccessToken, preAuthorize(authorities.staffSearch.code, authorities.staffSearch.code), findByEmail );
 router.route('/dashboard').get( verifyAccessToken, dashboardInfo );
 router.route('/profile/pw/update').put( verifyAccessToken, updatePassword );
-router.route('/profile/info/update').put( verifyAccessToken, validate(personal_info_schema), updatePersonalInfo );
+router.route('/profile/info/update').put( verifyAccessToken, validateReqBody(personal_info_schema), updatePersonalInfo );
 router.route('/profile/email/update/:nano_id').get( verifyAccessToken, updateEmail );
-router.route('/profile/email/update').put( verifyAccessToken, validate(email_schema), markEmailForUpdate );
+router.route('/profile/email/update').put( verifyAccessToken, validateReqBody(email_schema), markEmailForUpdate );
 router.route('/profile/search/:id').get( verifyAccessToken, preAuthorize(authorities.viewStaffProfile.code, authorities.staffSearch.code), findByIdWithAuths );
 router.route('/search/:id').get( verifyAccessToken, preAuthorize(authorities.staffSearch.code), findById );
 router.route('/active/init/:pageSize').get( verifyAccessToken, preAuthorize(authorities.viewStaff.code), activeStaffPageInit );

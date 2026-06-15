@@ -6,7 +6,7 @@ const preAuthorize = require('../middleware/verify-authorities');
 const { encrypt, decrypt } = require('../utils/crypto-helper');
 const { verifyAccessToken } = require('../middleware/jwt');
 const productCatService = require('../api-services/product-category-service');
-const validate = require('../middleware/schemer-validator');
+const { validateReqBody } = require('../middleware/schemer-validator');
 const { routeStringMiscParamSchema, routeBooleanParamSchema, routePositiveNumberMiscParamSchema } = require('../yup-schemas/request-params');
 
 const findByNanoId = async (req, res) => {

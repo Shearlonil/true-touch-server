@@ -7,7 +7,7 @@ const fsPromises = require('fs').promises;
 const { authorities } = require('../utils/default-entries');
 const preAuthorize = require('../middleware/verify-authorities');
 const { verifyAccessToken, verifyOTPtoken, createClientAccessToken, createRefreshToken } = require('../middleware/jwt');
-const validate = require('../middleware/schemer-validator');
+const { validateReqBody } = require('../middleware/schemer-validator');
 const multerImgUpload = require('../utils/multer-img-upload');
 const schema = require('../yup-schemas/user-schema');
 const { personal_info_schema, pw_schema, hcp_schema, email_schema } = require('../yup-schemas/user-update-schema');
@@ -364,12 +364,12 @@ const cleanUpFileUpload = async (file) => {
     }
 };
 
-router.route('/onboarding').post(multerImgUpload, validate(schema), register );
-router.route('/profile/info/update').put( verifyAccessToken, validate(personal_info_schema), updatePersonalInfo );
+router.route('/onboarding').post(multerImgUpload, validateReqBody(schema), register );
+router.route('/profile/info/update').put( verifyAccessToken, validateReqBody(personal_info_schema), updatePersonalInfo );
 router.route('/profile/hc/update').put( verifyAccessToken, updateHomeClub );
-router.route('/profile/hcp/update').put( verifyAccessToken, validate(hcp_schema), updateHCP );
-router.route('/profile/pw/update').put( verifyAccessToken, validate(pw_schema), updatePassword );
-router.route('/profile/email/update').put( verifyAccessToken, validate(email_schema), markEmailForUpdate );
+router.route('/profile/hcp/update').put( verifyAccessToken, validateReqBody(hcp_schema), updateHCP );
+router.route('/profile/pw/update').put( verifyAccessToken, validateReqBody(pw_schema), updatePassword );
+router.route('/profile/email/update').put( verifyAccessToken, validateReqBody(email_schema), markEmailForUpdate );
 router.route('/profile/email/update/:nano_id').get( verifyAccessToken, updateEmail );
 router.route('/profile/dp/update').post(verifyAccessToken, multerImgUpload, dpUpload );
 router.route('/accounts/logout').post(verifyAccessToken, multerImgUpload, logoutAllAccounts );

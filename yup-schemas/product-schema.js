@@ -29,6 +29,32 @@ const productCreationSchema = yup.object().shape({
 	tract: yup.string().required("Product Department required!").typeError("Select a valid department"),
 });
 
+const productFilterSearchSchema = yup.object().shape({
+	name: yup
+		.string()
+		.optional()
+		.nullable()
+		.transform((curr, orig) => (orig === '' ? null : curr)),
+	page: yup
+		.number()
+		.positive("Current page number must be positive")
+		.required("Current page number is required"),
+	pageSize: yup
+		.number()
+		.positive("Page size must be positive")
+		.required("Page size is required"),
+	brand: yup
+		.string()
+		.optional()
+		.nullable()
+		.transform((curr, orig) => (orig === '' ? null : curr)),
+	category: yup
+		.string()
+		.optional()
+		.nullable()
+		.transform((curr, orig) => (orig === '' ? null : curr)),
+});
+
 const storeItemRegSchema = yup.object().shape({
 	section: yup.object().required("Select a section"),
 	product_name: yup.string().required("Product name required!"),
@@ -146,7 +172,7 @@ const purchasesUpdateSchema = yup.object().shape({
 
 module.exports = { 
     productCreationSchema,
-    storeItemRegSchema, 
+    productFilterSearchSchema, 
     restockSchema, 
     productUpdateSchema, 
     purchasesUpdateSchema 

@@ -1,8 +1,10 @@
 const db = require('../config/entities-config');
-const { Op } = require('sequelize');
 const { QueryTypes } = db.sequelize;
 const { nanoid } = require('nanoid');
 const { format } = require('date-fns');
+const { Sequelize } = require('sequelize');
+const Op = db.Op;
+// const Sequelize = db.Sequelize;
 
 const User = db.users;
 const Product = db.products;
@@ -556,6 +558,108 @@ const paginateFetch = async (prop) => {
     return {count, products: rows};
 }
 
+const filterPaginateFetch = async (prop) => {
+    // page: Current page number (e.g., 1-indexed), pageSize: Number of items per page
+    const {page, pageSize, brand, category, name} = prop;
+
+    let size = pageSize * 1;    // convert to number
+    const offset = (page - 1) * size;
+
+    const includeArr = [];
+
+    if(brand){
+        const b = await Brand.findOne({
+            where: { 
+                nano_id: brand,
+                status: true,
+            }
+        });
+        if(!b){
+            throw new Error("Invalid Product Brand specified");
+        }
+        includeArr.push(
+            {
+                model: Brand,
+                attributes: {
+                    exclude: ['id', 'nano_id'],
+                    include: [["nano_id", 'id'], 'name'],
+                },
+                where: {
+                    id: b.id
+                },
+                required: true, // Force an INNER JOIN (makes it mandatory)
+                through: { attributes: [] }, // Optional: hides junction table metadata from payload
+            }
+        )
+    }else {
+        includeArr.push(
+            {
+                model: Brand,
+                attributes: {
+                    exclude: ['id', 'nano_id'],
+                    include: [["nano_id", 'id'], 'name'],
+                },
+                required: false, // Force a LEFT OUTER JOIN (makes it optional)
+                through: { attributes: [] }, // Optional: hides junction table metadata from payload
+            }
+        )
+    }
+
+    if(category){
+        const c = await Category.findOne({
+            where: { 
+                nano_id: category,
+                status: true,
+            }
+        });
+        if(!c){
+            throw new Error("Invalid Product Category specified");
+        }
+        includeArr.push(
+            {
+                model: Category,
+                attributes: {
+                    exclude: ['id', 'nano_id'],
+                    include: [["nano_id", 'id'], 'name'],
+                },
+                where: {
+                    id: c.id
+                },
+                required: true, // Force an INNER JOIN (makes it mandatory)
+                through: { attributes: [] }, // Optional: hides junction table metadata from payload
+            }
+        );
+    }else {
+        includeArr.push(
+            {
+                model: Category,
+                attributes: {
+                    exclude: ['id', 'nano_id'],
+                    include: [["nano_id", 'id'], 'name'],
+                },
+                required: false, // Force a LEFT OUTER JOIN (makes it optional)
+                through: { attributes: [] }, // Optional: hides junction table metadata from payload
+            }
+        );
+    }
+
+
+    const { count, rows } = await Product.findAndCountAll({
+        where: { 
+            name: {
+                [Op.like]: `%${name != undefined ? name : ''}%`,
+            },
+         },
+        attributes: {
+            exclude: ['id', 'tract_id'],
+        },
+        include: [...includeArr],
+        limit: size,
+        offset: offset,
+    });
+    return {count, products: rows};
+}
+
 /*  method to initialize Product page with 100 active products to use as defaultOptions for AsyncSelect
     and also count total active products for pagination component */
 const activeProductPageInit = async (pageSize) => {
@@ -613,6 +717,38 @@ const activeProductPageInit = async (pageSize) => {
     return {count, products: rows};
 }
 
+const random = async () => {
+    return await Product.findAll({
+        where: { status: true },
+        attributes: {
+            exclude: ['id', 'nano_id', 'tract_id'],
+            include: [['nano_id', 'product_id'], ['name', 'product_name'], ['sales_price', 'price']],
+        },
+        include: [
+            {
+                model: Brand,
+                attributes: {
+                    exclude: ['id', 'nano_id'],
+                    include: [["nano_id", 'id'], 'name'],
+                },
+                required: false, // Force a LEFT OUTER JOIN (makes it optional)
+                through: { attributes: [] }, // Optional: hides junction table metadata from payload
+            },
+            {
+                model: Category,
+                attributes: {
+                    exclude: ['id', 'nano_id'],
+                    include: [["nano_id", 'id'], 'name'],
+                },
+                required: false, // Force a LEFT OUTER JOIN (makes it optional)
+                through: { attributes: [] }, // Optional: hides junction table metadata from payload
+            }
+        ],
+        order: Sequelize.literal('rand()'),
+        limit: 8,
+    });
+}
+
 module.exports = {
     findByNanoId,
     createProduct,
@@ -621,5 +757,7 @@ module.exports = {
     update,
     findAllActive,
     paginateFetch,
+    filterPaginateFetch,
     activeProductPageInit,
+    random,
 }
