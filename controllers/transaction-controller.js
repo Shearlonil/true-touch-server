@@ -12,27 +12,24 @@ const { routePositiveNumberMiscParamSchema, routeStringMiscParamSchema, routeBoo
     https://github.com/ZestArinze/payment-integration-paystack-tutorial
 */
 
-const initializeMembershipTransaction = async (req, res) => {
+const initializeSalesTransaction = async (req, res) => {
     try {
         const id = decrypt(req.whom.id);
         routeStringMiscParamSchema.validateSync(req.params.nano_id);
-        return res.status(200).json(await transactionService.initializeMembershipTransaction(id, req.params.nano_id));
-    } catch (error) {
-        return res.status(400).json({'message': error.message});
-    }
-}
-
-const initializeTrainingTransaction = async (req, res) => {
-    try {
-        const id = decrypt(req.whom.id);
-        routeStringMiscParamSchema.validateSync(req.params.nano_id);
-        return res.status(200).json(await transactionService.initializeTrainingTransaction(id, req.params.nano_id));
+        return res.status(200).json(await transactionService.initializeSalesTransaction(id, req.params.nano_id));
     } catch (error) {
         return res.status(400).json({'message': error.message});
     }
 }
 
 const webhook = async (req, res) => {
+    /*  PROCEDURE
+        *   After successful paystack payment, raise invoice with following data
+                =>  id
+                => paystack transaction ref
+                => status (delivered, processing)
+        *   Create SalesRecord for items bought
+    */
     try {
         await transactionService.webhook(req.body, req.headers['x-paystack-signature']);
         // Return a 200 response to acknowledge receipt of the event
@@ -44,7 +41,7 @@ const webhook = async (req, res) => {
 
 const callback = async (req, res) => {
     try {
-        // TODO: change to process.env.BASE_URL for production
+        //  TODO: change to process.env.BASE_URL for production
         /*  Redirecting ref:
             https://stackoverflow.com/questions/19035373/how-do-i-redirect-in-expressjs-while-passing-some-context
         */
@@ -72,8 +69,7 @@ const verifySubTransaction = async (req, res) => {
     }
 }
 
-router.route('/membership/initialize/:nano_id').post( verifyAccessToken, initializeMembershipTransaction );
-router.route('/training/initialize/:nano_id').post( verifyAccessToken, initializeTrainingTransaction );
+router.route('/sales/initialize/:nano_id').post( verifyAccessToken, initializeSalesTransaction );
 router.route('/paystack/webhook').post( webhook );
 router.route('/paystack/callback').get( callback );
 router.route('/paystack/verification').get( verifyAccessToken, verifySubTransaction );

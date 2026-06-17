@@ -11,20 +11,12 @@ const Course = db.courses;
 const ImgKeyHash = db.imgKeyHash;
 const Subscriptions = db.subscriptions;
 
-const initializeMembershipTransaction = async (user_id, plan_nano_id) => {
+const initializeSalesTransaction = async (user_id, plan_nano_id) => {
     const plan = await SubscriptionPlans.findOne({
         where: { nano_id: plan_nano_id },
         attributes: ['id', 'amount', 'discount', 'duration_months', 'name', 'desc'],
     });
     return await finishPaymentInitialization(user_id, plan, 'Membership');
-};
-
-const initializeTrainingTransaction = async (user_id, plan_nano_id) => {
-    const plan = await TrainingPlans.findOne({
-        where: { nano_id: plan_nano_id },
-        attributes: ['id', 'amount', 'discount', 'duration_days', 'name', 'desc'],
-    });
-    return await finishPaymentInitialization(user_id, plan, 'Training');
 };
 
 const verifySubTransaction = async (user_id, paystackRef) => {
@@ -167,8 +159,7 @@ const finishPaymentInitialization = async (user_id, plan, sub_type) => {
 }
 
 module.exports = {
-    initializeMembershipTransaction,
-    initializeTrainingTransaction,
+    initializeSalesTransaction,
     verifySubTransaction,
     webhook,
 };
